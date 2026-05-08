@@ -335,6 +335,10 @@ function UI:_create_window(opts)
         require("onioncrab").remove()
     end, { buffer = bufnr, silent = true })
 
+    vim.keymap.set("n", "d", function()
+        require("onioncrab").delete_concept()
+    end, { buffer = bufnr, silent = true })
+
     vim.keymap.set("n", "h", function()
         require("onioncrab")._ui_move(0, -1)
     end, { buffer = bufnr, silent = true })

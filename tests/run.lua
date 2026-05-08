@@ -16,6 +16,15 @@ local function ok(cond, msg)
     end
 end
 
+local function contains(list, item)
+    for _, v in ipairs(list or {}) do
+        if v == item then
+            return true
+        end
+    end
+    return false
+end
+
 local function test(name, fn)
     local ok_run, err = pcall(fn)
     if not ok_run then
@@ -131,6 +140,27 @@ function M.run()
             ok(vim.bo.filetype == "onioncrab", "expected onioncrab UI buffer")
             -- Close to avoid interference with other tests.
             require("onioncrab.ui").close()
+        end)
+        table.insert(results, { pass = pass, err = err })
+    end
+
+    do
+        local pass, err = test("django_rest_defaults_follow_styleguide_boxes", function()
+            before_each()
+            new_onioncrab({ notify = false })
+
+            local State = require("onioncrab.state")
+            local layers = State.config.frameworks["django-rest"].layers
+
+            ok(contains(layers, "model"), "expected model layer")
+            ok(contains(layers, "service"), "expected service layer")
+            ok(contains(layers, "selector"), "expected selector layer")
+            ok(contains(layers, "api"), "expected api layer")
+            ok(contains(layers, "url"), "expected url layer")
+            ok(contains(layers, "test"), "expected test layer")
+
+            ok(not contains(layers, "view"), "expected to not use view layer by default")
+            ok(not contains(layers, "repository"), "expected to not use repository layer by default")
         end)
         table.insert(results, { pass = pass, err = err })
     end
@@ -388,6 +418,82 @@ function M.run()
             eq(idx:length(), 1, "expected concept to remain in index")
             ok(idx:get(1).value == "User", "expected concept name preserved")
             ok(clist:get(1) and clist:get(1).value ~= "", "expected other cell to remain")
+        end)
+        table.insert(results, { pass = pass, err = err })
+    end
+
+    do
+        local pass, err = test("delete_concept_removes_from_index_and_clears_list", function()
+            before_each()
+            local onioncrab = new_onioncrab({
+                notify = false,
+                frameworks = {
+                    ["django-rest"] = { layers = { "model", "serializer", "view" } },
+                },
+            })
+
+            onioncrab.delete_concepts()
+
+            local idx = harpoon:list("__onioncrab_concepts")
+            idx:clear()
+            idx:add({ value = "User", context = {} })
+            harpoon:sync()
+
+            local clist = harpoon:list("__onioncrab_concept::User")
+            clist:replace_at(1, { value = "app/user_model.py", context = {} })
+            clist:replace_at(2, { value = "app/user_serializer.py", context = {} })
+
+            local State = require("onioncrab.state")
+            State.nav.concept_idx = 1
+            State.nav.layer_idx = 2
+
+            local before_sync = harpoon.sync_count
+            onioncrab.delete_concept()
+
+            eq(harpoon.sync_count, before_sync + 1, "expected sync after concept deletion")
+            eq(idx:length(), 0, "expected concept removed from index")
+            eq(clist:length(), 0, "expected concept list cleared")
+        end)
+        table.insert(results, { pass = pass, err = err })
+    end
+
+    do
+        local pass, err = test("menu_d_deletes_current_concept", function()
+            before_each()
+            local onioncrab = new_onioncrab({
+                notify = false,
+                frameworks = {
+                    ["django-rest"] = { layers = { "model", "serializer", "view" } },
+                },
+            })
+
+            onioncrab.delete_concepts()
+
+            local idx = harpoon:list("__onioncrab_concepts")
+            idx:clear()
+            idx:add({ value = "User", context = {} })
+            harpoon:sync()
+
+            local clist = harpoon:list("__onioncrab_concept::User")
+            clist:replace_at(1, { value = "app/user_model.py", context = {} })
+
+            local State = require("onioncrab.state")
+            State.nav.concept_idx = 1
+            State.nav.layer_idx = 1
+
+            onioncrab.menu()
+            ok(vim.bo.filetype == "onioncrab", "expected onioncrab UI buffer")
+
+            local before_sync = harpoon.sync_count
+            local keys = vim.api.nvim_replace_termcodes("d", true, false, true)
+            vim.api.nvim_feedkeys(keys, "mx", false)
+            vim.wait(50)
+
+            eq(harpoon.sync_count, before_sync + 1, "expected sync after d deletion")
+            eq(idx:length(), 0, "expected concept removed from index")
+            eq(clist:length(), 0, "expected concept list cleared")
+
+            require("onioncrab.ui").close()
         end)
         table.insert(results, { pass = pass, err = err })
     end

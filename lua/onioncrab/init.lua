@@ -465,6 +465,27 @@ function M.remove()
     end)
  end
 
+---Delete the current concept entirely (removes it from the index and clears its list).
+---No-op if there are no concepts yet.
+function M.delete_concept()
+    ensure_setup_called()
+
+    if concept_index_list():length() == 0 then
+        return
+    end
+
+    local concept = ensure_current_concept()
+    local list = get_concept_list(concept)
+
+    list:clear()
+    remove_concept_from_index(concept)
+    harpoon:sync()
+
+    pcall(function()
+        UI.render()
+    end)
+end
+
 ---Delete all onioncrab concepts (persisted Harpoon lists) for the current project key.
 ---This only touches lists created by onioncrab: the index list + per-concept lists.
 function M.delete_concepts()
