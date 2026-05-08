@@ -154,3 +154,24 @@ This plugin is intentionally pragmatic:
 
 - detection is heuristic
 - you can always correct by overwriting a layer slot (add again)
+
+## Development
+
+### Tests
+
+This repo includes a small headless Neovim test runner that uses a mocked Harpoon implementation.
+It also mocks `plenary.path` for tests, so no vendored dependencies are required.
+
+Run:
+
+```sh
+./scripts/test
+```
+
+### Pre-commit
+
+If you use the `pre-commit` framework, you can run the test suite on every commit:
+
+```sh
+pre-commit install
+```
