@@ -75,36 +75,39 @@ end
 ---@param max_width? number
 ---@return table
 local function compute_matrix_layout(concepts, layers, max_width)
-    local concept_w = 7
-    for _, c in ipairs(concepts) do
-        concept_w = math.max(concept_w, math.min(#c, 24))
+    -- UI is transposed: rows = layers, cols = concepts.
+    -- First column width is based on layer names.
+    local layer_w = 7
+    for _, l in ipairs(layers) do
+        layer_w = math.max(layer_w, math.min(#l, 24))
     end
 
+    -- Cell width is based on concept names (column headers).
     local cell_w = 10
-    for _, l in ipairs(layers) do
-        cell_w = math.max(cell_w, math.min(#l, 18))
+    for _, c in ipairs(concepts) do
+        cell_w = math.max(cell_w, math.min(#c, 18))
     end
     local min_cell_w = 16
     cell_w = math.min(math.max(cell_w, min_cell_w), 30)
 
     local sep = " | "
 
-    if max_width and #layers > 0 then
-        local avail = max_width - concept_w - (#sep * #layers)
+    if max_width and #concepts > 0 then
+        local avail = max_width - layer_w - (#sep * #concepts)
         if avail > 0 then
-            cell_w = math.min(cell_w, math.floor(avail / #layers))
+            cell_w = math.min(cell_w, math.floor(avail / #concepts))
         end
         cell_w = math.max(min_cell_w, math.min(cell_w, 30))
     end
 
-    local first_col_w = concept_w
+    local first_col_w = layer_w
     local first_cell_col = first_col_w + #sep
     local stride = cell_w + #sep
 
-    local table_w = concept_w + (#layers * cell_w) + (#layers * #sep)
+    local table_w = layer_w + (#concepts * cell_w) + (#concepts * #sep)
 
     return {
-        concept_w = concept_w,
+        layer_w = layer_w,
         cell_w = cell_w,
         sep = sep,
         first_cell_col = first_cell_col,
@@ -120,17 +123,17 @@ end
 local function render_matrix_lines(concepts, layers, layout)
     local lines = {}
 
-    local header = fit_cell("Concept", layout.concept_w)
-    for _, layer in ipairs(layers) do
-        header = header .. layout.sep .. fit_cell(layer, layout.cell_w)
+    local header = fit_cell("Layer", layout.layer_w)
+    for _, concept in ipairs(concepts) do
+        header = header .. layout.sep .. fit_cell(concept, layout.cell_w)
     end
     table.insert(lines, header)
 
-    for _, concept in ipairs(concepts) do
-        local row = fit_cell(concept, layout.concept_w)
-        local clist = Ctx.get_concept_list(concept)
-        for i = 1, #layers do
-            local item = clist:get(i)
+    for layer_idx, layer in ipairs(layers) do
+        local row = fit_cell(layer, layout.layer_w)
+        for _, concept in ipairs(concepts) do
+            local clist = Ctx.get_concept_list(concept)
+            local item = clist:get(layer_idx)
             local v = (item and item.value) and short_path(item.value) or ""
             if Ctx.is_blank(v) then
                 v = "."
@@ -156,10 +159,10 @@ local function set_ui_cursor(concepts, layers, layout)
         return
     end
 
-    local r = wrap_idx(Ctx.state.nav.concept_idx, #concepts)
-    local c = wrap_idx(Ctx.state.nav.layer_idx, #layers)
-    Ctx.state.nav.concept_idx = r
-    Ctx.state.nav.layer_idx = c
+    local r = wrap_idx(Ctx.state.nav.layer_idx, #layers)
+    local c = wrap_idx(Ctx.state.nav.concept_idx, #concepts)
+    Ctx.state.nav.layer_idx = r
+    Ctx.state.nav.concept_idx = c
 
     local line = 1 + r
     local col = layout.first_cell_col + ((c - 1) * layout.stride)
@@ -185,9 +188,9 @@ function UI:_apply_highlights(concepts, layers, layout)
         return
     end
 
-    -- Column headers (layer names)
+    -- Column headers (concept names)
     local start = layout.first_cell_col
-    for i = 1, #layers do
+    for i = 1, #concepts do
         local col = start + ((i - 1) * layout.stride)
         vim.api.nvim_buf_add_highlight(
             self.bufnr,
@@ -199,8 +202,8 @@ function UI:_apply_highlights(concepts, layers, layout)
         )
     end
 
-    -- Left header column (concept names)
-    for i = 1, #concepts do
+    -- Left header column (layer names)
+    for i = 1, #layers do
         local line = i
         vim.api.nvim_buf_add_highlight(
             self.bufnr,
@@ -208,15 +211,15 @@ function UI:_apply_highlights(concepts, layers, layout)
             "OnioncrabHeaderCol",
             line,
             0,
-            layout.concept_w
+            layout.layer_w
         )
     end
 
     -- Separators
-    local sep_start = layout.concept_w
-    for i = 0, #concepts do
+    local sep_start = layout.layer_w
+    for i = 0, #layers do
         local col = sep_start
-        for _ = 1, #layers do
+        for _ = 1, #concepts do
             vim.api.nvim_buf_add_highlight(
                 self.bufnr,
                 ns,
@@ -230,15 +233,15 @@ function UI:_apply_highlights(concepts, layers, layout)
     end
 
     -- Active row/col headers + active cell
-    local r = wrap_idx(Ctx.state.nav.concept_idx, #concepts)
-    local c = wrap_idx(Ctx.state.nav.layer_idx, #layers)
+    local r = wrap_idx(Ctx.state.nav.layer_idx, #layers)
+    local c = wrap_idx(Ctx.state.nav.concept_idx, #concepts)
     vim.api.nvim_buf_add_highlight(
         self.bufnr,
         ns,
         "OnioncrabActiveHeaderCol",
         r,
         0,
-        layout.concept_w
+        layout.layer_w
     )
     local header_cell_col = layout.first_cell_col + ((c - 1) * layout.stride)
     vim.api.nvim_buf_add_highlight(
@@ -401,7 +404,7 @@ function UI:toggle()
 
     local concepts = Ctx.get_concepts()
     local layers = Ctx.get_layers()
-    local height = math.min((#concepts + 1), math.max(6, vim.o.lines - 6))
+    local height = math.min((#layers + 1), math.max(6, vim.o.lines - 6))
 
     local layout = compute_matrix_layout(concepts, layers, nil)
     local width = math.max(20, layout.table_w)
@@ -449,8 +452,9 @@ function M.move(drow, dcol)
         return
     end
 
-    Ctx.state.nav.concept_idx = wrap_idx(Ctx.state.nav.concept_idx + drow, #concepts)
-    Ctx.state.nav.layer_idx = wrap_idx(Ctx.state.nav.layer_idx + dcol, #layers)
+    -- UI is transposed: vertical movement changes layer; horizontal changes concept.
+    Ctx.state.nav.layer_idx = wrap_idx(Ctx.state.nav.layer_idx + drow, #layers)
+    Ctx.state.nav.concept_idx = wrap_idx(Ctx.state.nav.concept_idx + dcol, #concepts)
     UI:render()
 end
 
