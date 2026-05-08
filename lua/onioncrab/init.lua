@@ -4,6 +4,7 @@ local harpoon = require("harpoon")
 local Config = require("onioncrab.config")
 local Detect = require("onioncrab.detect")
 local State = require("onioncrab.state")
+local UI = require("onioncrab.ui")
 
 ---@class OnioncrabSetup
 ---@field frameworks? table<string, OnioncrabFrameworkSpec>
@@ -187,6 +188,19 @@ end
 ---@return HarpoonList
 local function get_concept_list(concept)
     return harpoon:list(concept_list_name(concept))
+end
+
+---@return string[]
+local function list_concepts()
+    local list = concept_index_list()
+    local out = {}
+    for i = 1, list:length() do
+        local item = list:get(i)
+        if item and item.value then
+            table.insert(out, item.value)
+        end
+    end
+    return out
 end
 
 ---@param list HarpoonList
@@ -374,19 +388,15 @@ end
 function M.menu()
     ensure_setup_called()
 
-    local concept = ensure_current_concept()
-    local list = get_concept_list(concept)
-    local layers = framework_spec().layers
+    UI.toggle()
+end
 
-    harpoon.ui:toggle_quick_menu(list, {
-        title = string.format(
-            "onioncrab: %s | layer=%s (%d/%d)",
-            concept,
-            layers[State.nav.layer_idx],
-            State.nav.layer_idx,
-            #layers
-        ),
-    })
+-- internal: used by UI keymaps
+---@param drow number
+---@param dcol number
+function M._ui_move(drow, dcol)
+    ensure_setup_called()
+    UI.move(drow, dcol)
 end
 
 function M.left()
@@ -516,6 +526,46 @@ function M.setup(user_config)
 
     State.config = Config.merge(user_config)
     State.did_setup = true
+
+    -- UI highlight defaults (users can override in their colorscheme).
+    vim.api.nvim_set_hl(0, "OnioncrabHeader", { link = "Title", default = true })
+    vim.api.nvim_set_hl(
+        0,
+        "OnioncrabHeaderCol",
+        { link = "Directory", default = true }
+    )
+    vim.api.nvim_set_hl(
+        0,
+        "OnioncrabSeparator",
+        { link = "Comment", default = true }
+    )
+    vim.api.nvim_set_hl(
+        0,
+        "OnioncrabActiveCell",
+        { link = "Visual", default = true }
+    )
+    vim.api.nvim_set_hl(
+        0,
+        "OnioncrabActiveHeader",
+        { link = "IncSearch", default = true }
+    )
+    vim.api.nvim_set_hl(
+        0,
+        "OnioncrabActiveHeaderCol",
+        { link = "IncSearch", default = true }
+    )
+
+    UI.setup({
+        state = State,
+        is_blank = is_blank,
+        get_concepts = list_concepts,
+        get_layers = function()
+            return framework_spec().layers
+        end,
+        get_concept_list = get_concept_list,
+        ensure_current_concept = ensure_current_concept,
+        current_framework = current_framework,
+    })
 
     -- NOTE: We intentionally do not call `harpoon:setup()` here.
     -- Harpoon's setup currently reinitializes internal state; calling it from
