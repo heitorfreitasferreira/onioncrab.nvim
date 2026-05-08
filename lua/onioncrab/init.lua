@@ -160,6 +160,23 @@ local function clamp_layer_idx(idx)
     return idx
 end
 
+---@param idx number
+---@return number
+local function wrap_layer_idx(idx)
+    local layers = framework_spec().layers
+    local n = #layers
+    if n == 0 then
+        return 1
+    end
+    if idx < 1 then
+        return n
+    end
+    if idx > n then
+        return 1
+    end
+    return idx
+end
+
 ---@return string
 local function current_layer_name()
     local layers = framework_spec().layers
@@ -170,6 +187,107 @@ end
 ---@return HarpoonList
 local function get_concept_list(concept)
     return harpoon:list(concept_list_name(concept))
+end
+
+---@param list HarpoonList
+---@param idx number
+---@return boolean
+local function cell_filled(list, idx)
+    local item = list:get(idx)
+    return item ~= nil and not is_blank(item.value)
+end
+
+---@param list HarpoonList
+---@param start_idx number
+---@return number? idx
+local function find_nearest_filled_layer_idx(list, start_idx)
+    local n = #framework_spec().layers
+    if n == 0 then
+        return nil
+    end
+
+    local base = wrap_layer_idx(start_idx)
+    if cell_filled(list, base) then
+        return base
+    end
+
+    for dist = 1, n - 1 do
+        local fwd = wrap_layer_idx(base + dist)
+        if cell_filled(list, fwd) then
+            return fwd
+        end
+        local back = wrap_layer_idx(base - dist)
+        if cell_filled(list, back) then
+            return back
+        end
+    end
+
+    return nil
+end
+
+---@param list HarpoonList
+---@param start_idx number
+---@param step number
+---@return number? idx
+local function find_next_filled_layer_idx(list, start_idx, step)
+    local n = #framework_spec().layers
+    if n == 0 then
+        return nil
+    end
+
+    local idx = wrap_layer_idx(start_idx)
+    for _ = 1, n do
+        if cell_filled(list, idx) then
+            return idx
+        end
+        idx = wrap_layer_idx(idx + step)
+    end
+
+    return nil
+end
+
+---@return boolean opened
+local function open_current_cell()
+    local concept = ensure_current_concept()
+    local list = get_concept_list(concept)
+    local idx = State.nav.layer_idx
+
+    local item = list:get(idx)
+    if item and not is_blank(item.value) then
+        list:select(idx)
+        return true
+    end
+
+    local nearest = find_nearest_filled_layer_idx(list, idx)
+    if nearest then
+        State.nav.layer_idx = nearest
+        list:select(nearest)
+        return true
+    end
+
+    note(
+        string.format(
+            "onioncrab: empty cell %s [%s] (%d/%d)",
+            concept,
+            current_layer_name(),
+            idx,
+            #framework_spec().layers
+        )
+    )
+    return false
+end
+
+---@param list HarpoonList
+---@param idx number
+---@return boolean opened
+local function select_layer_if_filled(list, idx)
+    local item = list:get(idx)
+    if not item or is_blank(item.value) then
+        return false
+    end
+    State.nav.layer_idx = wrap_layer_idx(idx)
+    list:select(State.nav.layer_idx)
+    return true
 end
 
 ---@param layer string
@@ -250,10 +368,7 @@ end
 function M.open()
     ensure_setup_called()
 
-    local concept = ensure_current_concept()
-    local list = get_concept_list(concept)
-    local idx = State.nav.layer_idx
-    list:select(idx)
+    open_current_cell()
 end
 
 function M.menu()
@@ -282,11 +397,23 @@ function M.left()
         ensure_current_concept()
         return
     end
+
+    local n = list:length()
     State.nav.concept_idx = State.nav.concept_idx - 1
     if State.nav.concept_idx < 1 then
-        State.nav.concept_idx = 1
+        State.nav.concept_idx = n
     end
-    note("onioncrab: concept=" .. ensure_current_concept())
+
+    local concept = ensure_current_concept()
+    note("onioncrab: concept=" .. concept)
+
+    local clist = get_concept_list(concept)
+    local nearest = find_nearest_filled_layer_idx(clist, State.nav.layer_idx)
+    if nearest then
+        select_layer_if_filled(clist, nearest)
+    else
+        open_current_cell()
+    end
 end
 
 function M.right()
@@ -296,16 +423,48 @@ function M.right()
         ensure_current_concept()
         return
     end
+
+    local n = list:length()
     State.nav.concept_idx = State.nav.concept_idx + 1
-    if State.nav.concept_idx > list:length() then
-        State.nav.concept_idx = list:length()
+    if State.nav.concept_idx > n then
+        State.nav.concept_idx = 1
     end
-    note("onioncrab: concept=" .. ensure_current_concept())
+
+    local concept = ensure_current_concept()
+    note("onioncrab: concept=" .. concept)
+
+    local clist = get_concept_list(concept)
+    local nearest = find_nearest_filled_layer_idx(clist, State.nav.layer_idx)
+    if nearest then
+        select_layer_if_filled(clist, nearest)
+    else
+        open_current_cell()
+    end
 end
 
 function M.up()
     ensure_setup_called()
-    State.nav.layer_idx = clamp_layer_idx(State.nav.layer_idx - 1)
+
+    local concept = ensure_current_concept()
+    local clist = get_concept_list(concept)
+
+    local start = wrap_layer_idx(State.nav.layer_idx - 1)
+    local next_idx = find_next_filled_layer_idx(clist, start, -1)
+    if next_idx then
+        State.nav.layer_idx = next_idx
+        note(
+            string.format(
+                "onioncrab: layer=%s (%d/%d)",
+                current_layer_name(),
+                State.nav.layer_idx,
+                #framework_spec().layers
+            )
+        )
+        clist:select(State.nav.layer_idx)
+        return
+    end
+
+    State.nav.layer_idx = start
     note(
         string.format(
             "onioncrab: layer=%s (%d/%d)",
@@ -314,11 +473,32 @@ function M.up()
             #framework_spec().layers
         )
     )
+    open_current_cell()
 end
 
 function M.down()
     ensure_setup_called()
-    State.nav.layer_idx = clamp_layer_idx(State.nav.layer_idx + 1)
+
+    local concept = ensure_current_concept()
+    local clist = get_concept_list(concept)
+
+    local start = wrap_layer_idx(State.nav.layer_idx + 1)
+    local next_idx = find_next_filled_layer_idx(clist, start, 1)
+    if next_idx then
+        State.nav.layer_idx = next_idx
+        note(
+            string.format(
+                "onioncrab: layer=%s (%d/%d)",
+                current_layer_name(),
+                State.nav.layer_idx,
+                #framework_spec().layers
+            )
+        )
+        clist:select(State.nav.layer_idx)
+        return
+    end
+
+    State.nav.layer_idx = start
     note(
         string.format(
             "onioncrab: layer=%s (%d/%d)",
@@ -327,6 +507,7 @@ function M.down()
             #framework_spec().layers
         )
     )
+    open_current_cell()
 end
 
 ---@param user_config? OnioncrabSetup
