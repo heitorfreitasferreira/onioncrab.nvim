@@ -229,6 +229,8 @@ function M.run()
             harpoon:sync()
 
             local clist = harpoon:list("__onioncrab_concept::User")
+            -- Keep concept alive after removing layer 2.
+            clist:replace_at(1, { value = "app/user_model.py", context = {} })
             clist:replace_at(2, { value = "app/user_serializer.py", context = {} })
 
             local State = require("onioncrab.state")
@@ -296,6 +298,8 @@ function M.run()
             harpoon:sync()
 
             local clist = harpoon:list("__onioncrab_concept::User")
+            -- Keep concept alive after removing layer 2.
+            clist:replace_at(1, { value = "app/user_model.py", context = {} })
             clist:replace_at(2, { value = "app/user_serializer.py", context = {} })
 
             local State = require("onioncrab.state")
@@ -317,6 +321,73 @@ function M.run()
             ok(clist:get(2).value == "", "expected removed cell to be blank")
 
             require("onioncrab.ui").close()
+        end)
+        table.insert(results, { pass = pass, err = err })
+    end
+
+    do
+        local pass, err = test("remove_deletes_concept_when_last_cell_removed", function()
+            before_each()
+            local onioncrab = new_onioncrab({
+                notify = false,
+                frameworks = {
+                    ["django-rest"] = { layers = { "model", "serializer", "view" } },
+                },
+            })
+
+            onioncrab.delete_concepts()
+
+            local idx = harpoon:list("__onioncrab_concepts")
+            idx:clear()
+            idx:add({ value = "User", context = {} })
+            harpoon:sync()
+
+            local clist = harpoon:list("__onioncrab_concept::User")
+            -- Only one cell set in the whole concept.
+            clist:replace_at(2, { value = "app/user_serializer.py", context = {} })
+
+            local State = require("onioncrab.state")
+            State.nav.concept_idx = 1
+            State.nav.layer_idx = 2
+
+            local before_sync = harpoon.sync_count
+            onioncrab.remove()
+
+            eq(harpoon.sync_count, before_sync + 1, "expected single sync after removal")
+            eq(idx:length(), 0, "expected concept to be removed from index")
+        end)
+        table.insert(results, { pass = pass, err = err })
+    end
+
+    do
+        local pass, err = test("remove_keeps_concept_when_other_cells_exist", function()
+            before_each()
+            local onioncrab = new_onioncrab({
+                notify = false,
+                frameworks = {
+                    ["django-rest"] = { layers = { "model", "serializer", "view" } },
+                },
+            })
+
+            onioncrab.delete_concepts()
+
+            local idx = harpoon:list("__onioncrab_concepts")
+            idx:clear()
+            idx:add({ value = "User", context = {} })
+            harpoon:sync()
+
+            local clist = harpoon:list("__onioncrab_concept::User")
+            clist:replace_at(1, { value = "app/user_model.py", context = {} })
+            clist:replace_at(2, { value = "app/user_serializer.py", context = {} })
+
+            local State = require("onioncrab.state")
+            State.nav.concept_idx = 1
+            State.nav.layer_idx = 2
+
+            onioncrab.remove()
+            eq(idx:length(), 1, "expected concept to remain in index")
+            ok(idx:get(1).value == "User", "expected concept name preserved")
+            ok(clist:get(1) and clist:get(1).value ~= "", "expected other cell to remain")
         end)
         table.insert(results, { pass = pass, err = err })
     end

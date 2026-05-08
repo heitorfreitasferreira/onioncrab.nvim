@@ -391,6 +391,45 @@ function M.menu()
     UI.toggle()
 end
 
+---@param list HarpoonList
+---@return boolean
+local function concept_list_has_any_filled_cell(list)
+    local n = #framework_spec().layers
+    for i = 1, n do
+        local it = list:get(i)
+        if it and not is_blank(it.value) then
+            return true
+        end
+    end
+    return false
+end
+
+---@param concept string
+local function remove_concept_from_index(concept)
+    local idx_list = concept_index_list()
+    if idx_list:length() == 0 then
+        return
+    end
+
+    local kept = {}
+    for i = 1, idx_list:length() do
+        local it = idx_list:get(i)
+        if it and it.value and it.value ~= concept then
+            table.insert(kept, it.value)
+        end
+    end
+
+    idx_list:clear()
+    for _, v in ipairs(kept) do
+        idx_list:add({ value = v, context = {} })
+    end
+
+    -- Keep nav index in bounds.
+    if State.nav.concept_idx > idx_list:length() then
+        State.nav.concept_idx = 1
+    end
+end
+
 ---Remove the current (concept, layer) cell from the matrix.
 ---No-op if there is no concept or the cell is already empty.
 function M.remove()
@@ -411,6 +450,13 @@ function M.remove()
     end
 
     list:replace_at(idx, { value = "", context = {} })
+
+    -- If this was the last filled cell for the concept, remove the concept itself.
+    if not concept_list_has_any_filled_cell(list) then
+        remove_concept_from_index(concept)
+        list:clear()
+    end
+
     harpoon:sync()
 
     -- If the menu is open, re-render so the cell updates to '.'.
