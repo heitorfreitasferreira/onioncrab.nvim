@@ -331,6 +331,10 @@ function UI:_create_window(opts)
         require("onioncrab").open()
     end, { buffer = bufnr, silent = true })
 
+    vim.keymap.set("n", "x", function()
+        require("onioncrab").remove()
+    end, { buffer = bufnr, silent = true })
+
     vim.keymap.set("n", "h", function()
         require("onioncrab")._ui_move(0, -1)
     end, { buffer = bufnr, silent = true })
@@ -430,6 +434,17 @@ function M.toggle()
         error("onioncrab.ui: setup(ctx) not called")
     end
     UI:toggle()
+end
+
+function M.render()
+    -- Safe to call even if UI isn't open.
+    if not Ctx then
+        return
+    end
+    if not (UI.win_id and vim.api.nvim_win_is_valid(UI.win_id)) then
+        return
+    end
+    UI:render()
 end
 
 function M.close()

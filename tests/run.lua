@@ -211,6 +211,116 @@ function M.run()
         table.insert(results, { pass = pass, err = err })
     end
 
+    do
+        local pass, err = test("remove_clears_current_cell_and_syncs", function()
+            before_each()
+            local onioncrab = new_onioncrab({
+                notify = false,
+                frameworks = {
+                    ["django-rest"] = { layers = { "model", "serializer", "view" } },
+                },
+            })
+
+            onioncrab.delete_concepts()
+
+            local idx = harpoon:list("__onioncrab_concepts")
+            idx:clear()
+            idx:add({ value = "User", context = {} })
+            harpoon:sync()
+
+            local clist = harpoon:list("__onioncrab_concept::User")
+            clist:replace_at(2, { value = "app/user_serializer.py", context = {} })
+
+            local State = require("onioncrab.state")
+            State.nav.concept_idx = 1
+            State.nav.layer_idx = 2
+
+            local before_sync = harpoon.sync_count
+            onioncrab.remove()
+
+            eq(harpoon.sync_count, before_sync + 1, "expected harpoon:sync() after removal")
+            ok(clist:get(2) ~= nil, "expected cell to exist after replace_at")
+            ok(clist:get(2).value == "", "expected removed cell to be blank")
+        end)
+        table.insert(results, { pass = pass, err = err })
+    end
+
+    do
+        local pass, err = test("remove_is_noop_on_empty_cell", function()
+            before_each()
+            local onioncrab = new_onioncrab({
+                notify = false,
+                frameworks = {
+                    ["django-rest"] = { layers = { "model", "serializer", "view" } },
+                },
+            })
+
+            onioncrab.delete_concepts()
+
+            local idx = harpoon:list("__onioncrab_concepts")
+            idx:clear()
+            idx:add({ value = "User", context = {} })
+            harpoon:sync()
+
+            -- No cell set at layer 2.
+            local clist = harpoon:list("__onioncrab_concept::User")
+
+            local State = require("onioncrab.state")
+            State.nav.concept_idx = 1
+            State.nav.layer_idx = 2
+
+            local before_sync = harpoon.sync_count
+            onioncrab.remove()
+
+            eq(harpoon.sync_count, before_sync, "expected no sync on noop removal")
+            ok(clist:get(2) == nil or clist:get(2).value == "", "expected cell to stay empty")
+        end)
+        table.insert(results, { pass = pass, err = err })
+    end
+
+    do
+        local pass, err = test("menu_x_removes_current_cell", function()
+            before_each()
+            local onioncrab = new_onioncrab({
+                notify = false,
+                frameworks = {
+                    ["django-rest"] = { layers = { "model", "serializer", "view" } },
+                },
+            })
+
+            onioncrab.delete_concepts()
+
+            local idx = harpoon:list("__onioncrab_concepts")
+            idx:clear()
+            idx:add({ value = "User", context = {} })
+            harpoon:sync()
+
+            local clist = harpoon:list("__onioncrab_concept::User")
+            clist:replace_at(2, { value = "app/user_serializer.py", context = {} })
+
+            local State = require("onioncrab.state")
+            State.nav.concept_idx = 1
+            State.nav.layer_idx = 2
+
+            onioncrab.menu()
+            ok(vim.bo.filetype == "onioncrab", "expected onioncrab UI buffer")
+
+            local before_sync = harpoon.sync_count
+
+            -- Feed key through mappings (buffer-local map in UI).
+            local keys = vim.api.nvim_replace_termcodes("x", true, false, true)
+            vim.api.nvim_feedkeys(keys, "mx", false)
+            vim.wait(50)
+
+            eq(harpoon.sync_count, before_sync + 1, "expected sync after x removal")
+            ok(clist:get(2) ~= nil, "expected cell to exist after replace_at")
+            ok(clist:get(2).value == "", "expected removed cell to be blank")
+
+            require("onioncrab.ui").close()
+        end)
+        table.insert(results, { pass = pass, err = err })
+    end
+
     local failed = {}
     for _, r in ipairs(results) do
         if not r.pass then

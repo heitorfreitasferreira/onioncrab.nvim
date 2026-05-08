@@ -391,6 +391,34 @@ function M.menu()
     UI.toggle()
 end
 
+---Remove the current (concept, layer) cell from the matrix.
+---No-op if there is no concept or the cell is already empty.
+function M.remove()
+    ensure_setup_called()
+
+    -- No concepts yet: nothing to remove.
+    if concept_index_list():length() == 0 then
+        return
+    end
+
+    local concept = ensure_current_concept()
+    local list = get_concept_list(concept)
+    local idx = State.nav.layer_idx
+
+    local item = list:get(idx)
+    if not item or is_blank(item.value) then
+        return
+    end
+
+    list:replace_at(idx, { value = "", context = {} })
+    harpoon:sync()
+
+    -- If the menu is open, re-render so the cell updates to '.'.
+    pcall(function()
+        UI.render()
+    end)
+ end
+
 ---Delete all onioncrab concepts (persisted Harpoon lists) for the current project key.
 ---This only touches lists created by onioncrab: the index list + per-concept lists.
 function M.delete_concepts()
