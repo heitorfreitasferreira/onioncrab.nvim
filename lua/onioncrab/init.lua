@@ -6,6 +6,9 @@ local Detect = require("onioncrab.detect")
 local State = require("onioncrab.state")
 local UI = require("onioncrab.ui")
 
+-- Forward declaration (used by infer_concept)
+local list_concepts
+
 ---@class OnioncrabSetup
 ---@field frameworks? table<string, OnioncrabFrameworkSpec>
 ---@field concept_list_name? string
@@ -104,6 +107,187 @@ local function infer_concept(rel_path)
     local fw = current_framework()
     local spec = State.config.frameworks[fw]
     local concept = Detect.detect_concept(rel_path, spec)
+
+    -- Optional fuzzy aliasing: if the detected concept is "close" to an existing one,
+    -- reuse the existing name to keep layers grouped (e.g. ExternalPrice -> ExternalPricing).
+    local fuzzy = (spec or {}).concept_fuzzy or {}
+    if fuzzy.enabled then
+        local idx_list = concept_index_list()
+        local existing_item = idx_list:get_by_value(concept)
+        if existing_item == nil then
+            local function norm(s)
+                s = tostring(s or ""):lower()
+                -- keep alnum only so snake/camel/paths compare well
+                s = s:gsub("[^%w]", "")
+                return s
+            end
+
+            local function common_prefix_len(a, b)
+                local n = math.min(#a, #b)
+                local i = 0
+                while i < n do
+                    local ia = a:sub(i + 1, i + 1)
+                    local ib = b:sub(i + 1, i + 1)
+                    if ia ~= ib then
+                        break
+                    end
+                    i = i + 1
+                end
+                return i
+            end
+
+            local function levenshtein(a, b, max_dist)
+                if a == b then
+                    return 0
+                end
+                local la, lb = #a, #b
+                if la == 0 then
+                    return lb
+                end
+                if lb == 0 then
+                    return la
+                end
+                if max_dist and math.abs(la - lb) > max_dist then
+                    return max_dist + 1
+                end
+
+                -- DP with two rows to keep allocations small.
+                local prev = {}
+                local cur = {}
+                for j = 0, lb do
+                    prev[j] = j
+                end
+
+                for i = 1, la do
+                    cur[0] = i
+                    local ai = a:sub(i, i)
+                    local row_min = cur[0]
+                    for j = 1, lb do
+                        local cost = (ai == b:sub(j, j)) and 0 or 1
+                        local ins = cur[j - 1] + 1
+                        local del = prev[j] + 1
+                        local sub = prev[j - 1] + cost
+                        local v = ins
+                        if del < v then
+                            v = del
+                        end
+                        if sub < v then
+                            v = sub
+                        end
+                        cur[j] = v
+                        if v < row_min then
+                            row_min = v
+                        end
+                    end
+
+                    if max_dist and row_min > max_dist then
+                        return max_dist + 1
+                    end
+
+                    prev, cur = cur, prev
+                end
+
+                return prev[lb]
+            end
+
+            local function concept_has_app_evidence(c, app)
+                if app == nil or app == "" then
+                    return false
+                end
+                local list = harpoon:list(concept_list_name(c))
+                local n = #(spec.layers or {})
+                for i = 1, n do
+                    local it = list:get(i)
+                    if it and it.value and it.value:sub(1, #app + 1) == app .. "/" then
+                        return true
+                    end
+                end
+                return false
+            end
+
+            local app = rel_path:match("^([^/]+)/")
+            local scope = fuzzy.scope or "project"
+            local prefix_len = tonumber(fuzzy.prefix_len) or 6
+            local max_dist = tonumber(fuzzy.max_dist) or 3
+            local max_ratio = tonumber(fuzzy.max_ratio) or 0.2
+
+            local existing = list_concepts()
+            local candidates = existing
+            if scope == "app" and app and app ~= "" then
+                -- Memoize evidence checks so we don't keep reopening Harpoon lists
+                -- for the same concept during this infer_concept call.
+                local evidence_cache = {}
+                local function has_evidence(c)
+                    local v = evidence_cache[c]
+                    if v ~= nil then
+                        return v
+                    end
+                    local ok = concept_has_app_evidence(c, app)
+                    evidence_cache[c] = ok
+                    return ok
+                end
+
+                local filtered = {}
+                for _, c in ipairs(existing) do
+                    if has_evidence(c) then
+                        table.insert(filtered, c)
+                    end
+                end
+                if #filtered > 0 then
+                    candidates = filtered
+                end
+            end
+
+            local n_concept = norm(concept)
+            local best = nil
+            local best_dist = nil
+            local best_prefix = nil
+            for _, c in ipairs(candidates) do
+                local n_c = norm(c)
+                if n_c ~= "" then
+                    -- Exact match after normalization (case/underscore/etc) should always alias.
+                    if n_c == n_concept then
+                        best = c
+                        best_dist = 0
+                        best_prefix = #n_concept
+                        break
+                    end
+
+                    local required_prefix = math.min(prefix_len, math.min(#n_concept, #n_c))
+                    local pfx = common_prefix_len(n_concept, n_c)
+                    if pfx >= required_prefix then
+                        local dist = levenshtein(n_concept, n_c, max_dist)
+                        local ratio = dist / math.max(#n_concept, #n_c)
+                        if dist <= max_dist and ratio <= max_ratio then
+                            if best == nil
+                                or dist < best_dist
+                                or (dist == best_dist and pfx > best_prefix)
+                            then
+                                best = c
+                                best_dist = dist
+                                best_prefix = pfx
+                            end
+                        end
+                    end
+                end
+            end
+
+            if best and best ~= concept then
+                if State.config.notify and (fuzzy.notify == nil or fuzzy.notify == true) then
+                    note(
+                        string.format(
+                            "onioncrab: concept alias %s -> %s%s",
+                            concept,
+                            best,
+                            (scope == "app" and app and app ~= "") and (" (" .. app .. ")") or ""
+                        )
+                    )
+                end
+                concept = best
+            end
+        end
+    end
+
     return concept
 end
 
@@ -191,7 +375,7 @@ local function get_concept_list(concept)
 end
 
 ---@return string[]
-local function list_concepts()
+list_concepts = function()
     local list = concept_index_list()
     local out = {}
     for i = 1, list:length() do

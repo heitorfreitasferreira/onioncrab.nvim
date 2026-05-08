@@ -101,15 +101,19 @@ function M.detect_layer(rel_path, spec)
 
     for _, rule in ipairs(spec.layer_rules or {}) do
         local ok = false
-        if rule.path and any_find_plain(rule.path, rp) then
+
+        -- Prefer semantic signals from file content (imports/usages) over
+        -- location/name heuristics, to avoid false positives like `previews.py`.
+        if rule.content and any_match(rule.content, text) then
+            ok = true
+        end
+        if not ok and rule.path and any_find_plain(rule.path, rp) then
             ok = true
         end
         if not ok and rule.filename and any_find_plain(rule.filename, fn) then
             ok = true
         end
-        if not ok and rule.content and any_match(rule.content, text) then
-            ok = true
-        end
+
         if ok then
             return rule.layer
         end
@@ -156,27 +160,167 @@ function M.detect_concept(rel_path, spec)
     spec = spec or {}
     local suf = spec.concept_suffixes or {}
 
+    local function norm(s)
+        s = tostring(s or ""):lower()
+        return s:gsub("[^%w]", "")
+    end
+
+    local function common_prefix_len(a, b)
+        local n = math.min(#a, #b)
+        local i = 0
+        while i < n do
+            if a:sub(i + 1, i + 1) ~= b:sub(i + 1, i + 1) then
+                break
+            end
+            i = i + 1
+        end
+        return i
+    end
+
+    local function levenshtein(a, b)
+        if a == b then
+            return 0
+        end
+        local la, lb = #a, #b
+        if la == 0 then
+            return lb
+        end
+        if lb == 0 then
+            return la
+        end
+
+        local prev = {}
+        local cur = {}
+        for j = 0, lb do
+            prev[j] = j
+        end
+        for i = 1, la do
+            cur[0] = i
+            local ai = a:sub(i, i)
+            for j = 1, lb do
+                local cost = (ai == b:sub(j, j)) and 0 or 1
+                local ins = cur[j - 1] + 1
+                local del = prev[j] + 1
+                local sub = prev[j - 1] + cost
+                local v = ins
+                if del < v then
+                    v = del
+                end
+                if sub < v then
+                    v = sub
+                end
+                cur[j] = v
+            end
+            prev, cur = cur, prev
+        end
+        return prev[lb]
+    end
+
+    local function clean_candidate(name)
+        name = strip_suffixes(name, suf)
+        -- For common DRF naming (`UserView`, `UserViews`), strip View(s) only when
+        -- it is a case-sensitive CamelCase suffix. This avoids truncating words like
+        -- `Review` (lowercase `view`).
+        if name:sub(-4) == "View" then
+            name = name:sub(1, #name - 4)
+        elseif name:sub(-5) == "Views" then
+            name = name:sub(1, #name - 5)
+        end
+        if name:sub(1, 4) == "Test" and #name > 4 then
+            name = name:sub(5)
+        end
+        return name
+    end
+
+    -- filename-driven baseline: user_serializer -> User
     local base = trim_ext(filename(rel_path))
-    local b = base
-
-    -- python-ish: user_serializer -> User
-    b = strip_suffixes(b, suf)
-    b = b:gsub("[_%-]+$", "")
-    if b:find("_") or b:find("-") then
-        b = snake_to_title(b)
+    base = base:gsub("^test[_%-]", "")
+    -- `views.py` is a generic container file; don't let it become a concept.
+    if base == "views" then
+        base = ""
     end
-    if b ~= "" then
-        return b
+    local file_concept = base
+    file_concept = strip_suffixes(file_concept, suf)
+    file_concept = file_concept:gsub("[_%-]+$", "")
+    if file_concept:find("_") or file_concept:find("-") then
+        file_concept = snake_to_title(file_concept)
     end
 
-    -- fallback: first class/record name
+    -- Prefer a class name, but pick the best match (not just the first).
+    -- This avoids helpers like Parsed* winning over the actual service class.
     local text = read_current_buffer_text()
-    local class_name = text:match("class%s+(%w+)")
-        or text:match("record%s+(%w+)")
-    if class_name then
-        class_name = strip_suffixes(class_name, suf)
-        if class_name ~= "" then
-            return class_name
+    local best = nil
+    local best_dist = nil
+    local best_pfx = nil
+    local want = norm(file_concept)
+
+    for cls in text:gmatch("\n%s*class%s+(%w+)") do
+        local cand = clean_candidate(cls)
+        if cand ~= "" then
+            if want == "" then
+                return cand
+            end
+            local n_cand = norm(cand)
+            if want ~= "" and n_cand == want then
+                return cand
+            end
+            local pfx = common_prefix_len(n_cand, want)
+            local dist = (want == "") and nil or levenshtein(n_cand, want)
+            if dist ~= nil then
+                if best == nil or dist < best_dist or (dist == best_dist and pfx > best_pfx) then
+                    best = cand
+                    best_dist = dist
+                    best_pfx = pfx
+                end
+            end
+        end
+    end
+
+    -- Also consider class at start-of-file (no leading newline)
+    do
+        local first = text:match("^%s*class%s+(%w+)")
+        if first then
+            local cand = clean_candidate(first)
+            if cand ~= "" then
+                if want == "" then
+                    return cand
+                end
+                local n_cand = norm(cand)
+                if want ~= "" and n_cand == want then
+                    return cand
+                end
+                local pfx = common_prefix_len(n_cand, want)
+                local dist = (want == "") and nil or levenshtein(n_cand, want)
+                if dist ~= nil then
+                    if best == nil or dist < best_dist or (dist == best_dist and pfx > best_pfx) then
+                        best = cand
+                        best_dist = dist
+                        best_pfx = pfx
+                    end
+                end
+            end
+        end
+    end
+
+    if best and want ~= "" then
+        -- Only trust the class-derived best if it's reasonably close.
+        local ratio = best_dist / math.max(#want, #norm(best))
+        if (best_pfx or 0) >= 4 and ratio <= 0.34 then
+            return best
+        end
+    end
+
+    if file_concept ~= "" then
+        return file_concept
+    end
+
+    -- last resort: record name (non-python)
+    local record_name = text:match("^%s*record%s+(%w+)")
+        or text:match("\n%s*record%s+(%w+)")
+    if record_name then
+        record_name = clean_candidate(record_name)
+        if record_name ~= "" then
+            return record_name
         end
     end
 

@@ -5,6 +5,15 @@ local M = {}
 ---@field concept_suffixes? string[]
 ---@field layer_rules? OnioncrabRule[]
 ---@field root_dir? fun(): string
+---@field concept_fuzzy? OnioncrabConceptFuzzySpec
+
+---@class OnioncrabConceptFuzzySpec
+---@field enabled boolean
+---@field notify? boolean
+---@field scope? 'app'|'project'
+---@field prefix_len? integer
+---@field max_dist? integer
+---@field max_ratio? number
 
 ---@class OnioncrabRule
 ---@field layer string
@@ -26,6 +35,14 @@ local function default_frameworks()
                 "task",
                 "test",
             },
+            concept_fuzzy = {
+                enabled = true,
+                notify = true,
+                scope = "app",
+                prefix_len = 6,
+                max_dist = 3,
+                max_ratio = 0.25,
+            },
             concept_suffixes = {
                 "model",
                 "models",
@@ -37,6 +54,11 @@ local function default_frameworks()
                 "apis",
                 "serializer",
                 "serializers",
+                -- Keep these boundary-aware to avoid truncating words like `Review`.
+                "_view",
+                "_views",
+                "-view",
+                "-views",
                 "admin",
                 "task",
                 "tasks",
@@ -47,6 +69,7 @@ local function default_frameworks()
                 {
                     layer = "model",
                     filename = { "models.py" },
+                    path = { "/models/" },
                     content = { "from%s+django%.db%s+import%s+models" },
                 },
                 {
@@ -61,10 +84,19 @@ local function default_frameworks()
                 },
                 {
                     layer = "api",
-                    filename = { "apis.py" },
-                    path = { "/apis/" },
+                    -- NOTE: filename matching is plain substring; keep this tight to avoid
+                    -- false positives like `previews.py` matching `views.py`.
+                    filename = { "apis.py", "_views.py" },
+                    path = { "/apis/", "/views/" },
                     content = {
                         "from%s+rest_framework%.views%s+import%s+APIView",
+                        "from%s+rest_framework%.decorators%s+import%s+api_view",
+                        "from%s+rest_framework%.decorators%s+import%s+action",
+                        "from%s+rest_framework%.response%s+import%s+Response",
+                        "from%s+rest_framework%s+import%s+status",
+                        "from%s+rest_framework%s+import%s+permissions",
+                        "from%s+rest_framework%.viewsets%s+import%s+%w+",
+                        "from%s+rest_framework%.generics%s+import%s+%w+APIView",
                     },
                 },
                 {
