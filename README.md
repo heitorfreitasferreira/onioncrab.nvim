@@ -113,6 +113,7 @@ Important:
 - `:OnioncrabMenu` open Harpoon quick menu for the current concept
 - `:OnioncrabLeft` / `:OnioncrabRight` navigate concepts
 - `:OnioncrabUp` / `:OnioncrabDown` navigate layers
+- `:OnioncrabReset` clear all onioncrab lists/state for current project
 
 ### Configuration
 

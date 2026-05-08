@@ -151,6 +151,11 @@ local function set_ui_cursor(concepts, layers, layout)
         return
     end
 
+    -- Empty state (no concepts or no layers): don't attempt to position cursor.
+    if #concepts == 0 or #layers == 0 then
+        return
+    end
+
     local r = wrap_idx(Ctx.state.nav.concept_idx, #concepts)
     local c = wrap_idx(Ctx.state.nav.layer_idx, #layers)
     Ctx.state.nav.concept_idx = r
@@ -174,6 +179,11 @@ function UI:_apply_highlights(concepts, layers, layout)
 
     -- Header row
     vim.api.nvim_buf_add_highlight(self.bufnr, ns, "OnioncrabHeader", 0, 0, -1)
+
+    -- Empty state: keep only header highlighted.
+    if #concepts == 0 or #layers == 0 then
+        return
+    end
 
     -- Column headers (layer names)
     local start = layout.first_cell_col
@@ -365,10 +375,6 @@ function UI:render()
         return
     end
 
-    if #Ctx.get_concepts() == 0 then
-        Ctx.ensure_current_concept()
-    end
-
     local concepts = Ctx.get_concepts()
     local layers = Ctx.get_layers()
     local max_width = nil
@@ -394,10 +400,6 @@ function UI:toggle()
     end
 
     local concepts = Ctx.get_concepts()
-    if #concepts == 0 then
-        Ctx.ensure_current_concept()
-        concepts = Ctx.get_concepts()
-    end
     local layers = Ctx.get_layers()
     local height = math.min((#concepts + 1), math.max(6, vim.o.lines - 6))
 
@@ -425,6 +427,10 @@ function M.toggle()
         error("onioncrab.ui: setup(ctx) not called")
     end
     UI:toggle()
+end
+
+function M.close()
+    UI:close()
 end
 
 ---@param drow number

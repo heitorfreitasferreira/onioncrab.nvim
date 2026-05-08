@@ -391,6 +391,42 @@ function M.menu()
     UI.toggle()
 end
 
+---Delete all onioncrab concepts (persisted Harpoon lists) for the current project key.
+---This only touches lists created by onioncrab: the index list + per-concept lists.
+function M.delete_concepts()
+    ensure_setup_called()
+
+    local idx_list = concept_index_list()
+    local concepts = list_concepts()
+
+    -- Clear per-concept lists first.
+    for _, concept in ipairs(concepts) do
+        get_concept_list(concept):clear()
+    end
+
+    -- Clear the index list.
+    idx_list:clear()
+
+    harpoon:sync()
+end
+
+---Fully reset onioncrab state for the current project key.
+---Clears all saved onioncrab lists and resets in-memory navigation/framework state.
+function M.reset()
+    ensure_setup_called()
+
+    -- Close UI if it's currently open.
+    pcall(function()
+        require("onioncrab.ui").close()
+    end)
+
+    M.delete_concepts()
+
+    State.nav.concept_idx = 1
+    State.nav.layer_idx = 1
+    State.project.framework = nil
+end
+
 -- internal: used by UI keymaps
 ---@param drow number
 ---@param dcol number
@@ -591,6 +627,10 @@ function M.setup(user_config)
     end, {})
     vim.api.nvim_create_user_command("OnioncrabDown", function()
         require("onioncrab").down()
+    end, {})
+
+    vim.api.nvim_create_user_command("OnioncrabReset", function()
+        require("onioncrab").reset()
     end, {})
 end
 
